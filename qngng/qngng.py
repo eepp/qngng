@@ -94,7 +94,7 @@ def _cat_file_to_objs(cat_filename, create_obj_func):
     return objs
 
 
-def _random_std_fullname(gender):
+def _random_std_fullname(double_surname, gender):
     name_objs = []
 
     if gender is None or gender == _Gender.MALE:
@@ -109,8 +109,12 @@ def _random_std_fullname(gender):
                                      lambda n, s: _PartialName(s))
     rand_name_obj = random.choice(name_objs)
     rand_surname_obj = random.choice(surname_objs)
-    return _FullName(rand_name_obj.name, rand_surname_obj.name,
-                     rand_name_obj.gender)
+    surname = rand_surname_obj.name
+
+    if double_surname:
+        surname = '{}-{}'.format(surname, random.choice(surname_objs).name)
+
+    return _FullName(rand_name_obj.name, surname, rand_name_obj.gender)
 
 
 def _random_cat_fullname(cat_name, gender):
@@ -153,6 +157,8 @@ def _parse_args():
                         help='Print name in `CapitalizedCamelCase` format')
     parser.add_argument('--cat', '-c', action='append',
                         help='Category name')
+    parser.add_argument('--double-surname', '-d', action='store_true',
+                        help='Create a double-barrelled surname (only available for the `std` category)')
     args = parser.parse_args()
 
     if sum([0 if args.gender is None else 1, args.male, args.female]) > 1:
@@ -267,7 +273,7 @@ def _run(args):
         rand_fullname = None
 
         if cat == 'std':
-            rand_fullname = _random_std_fullname(args.gender)
+            rand_fullname = _random_std_fullname(args.double_surname, args.gender)
         else:
             rand_fullname = _random_cat_fullname(cat, args.gender)
 

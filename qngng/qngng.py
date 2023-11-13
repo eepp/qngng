@@ -84,65 +84,91 @@ class _FullName:
         return self._middle_name[0].upper()
 
 
-def _cat_file_to_objs(cat_filename, create_obj_func):
-    path = os.path.join('cats', cat_filename) + '.json'
-    path = pkg_resources.resource_filename(__name__, path)
+class _App:
+    def __init__(self, std_surname_count, std_with_middle_name, gender, cats):
+        self._std_surname_count = std_surname_count
+        self._std_with_middle_name = std_with_middle_name
+        self._gender = gender
+        self._create_objs(cats)
 
-    if not os.path.exists(path):
-        return []
+    def random_full_name(self):
+        rand_cat = random.choice(list(self._cat_objs))
 
-    with open(path) as f:
-        entries = json.load(f)
+        if rand_cat == 'std':
+            return self._random_std_full_name()
+        else:
+            return random.choice(self._cat_objs[rand_cat])
 
-    objs = []
+    def _random_std_full_name(self):
+        rand_name_objs = random.sample(self._name_objs, 2 if self._std_with_middle_name else 1)
+        rand_surname_objs = random.sample(self._surname_objs, self._std_surname_count)
+        surname = '-'.join([obj.name for obj in rand_surname_objs])
+        return _FullName(rand_name_objs[0].name, surname, rand_name_objs[0].gender,
+                         rand_name_objs[1].name if self._std_with_middle_name else None)
 
-    for entry in entries:
-        name = entry.get('name')
-        surname = entry.get('surname')
-        objs.append(create_obj_func(name, surname))
+    def _get_cat_objs(self, cat):
+        assert cat != 'std'
+        objs = []
 
-    return objs
+        if self._gender is None or self._gender == _Gender.MALE:
+            objs += self._cat_file_to_objs(cat + '-m',
+                                           lambda n, s: _FullName(n, s, _Gender.MALE))
+
+        if self._gender is None or self._gender == _Gender.FEMALE:
+            objs += self._cat_file_to_objs(cat + '-f',
+                                           lambda n, s: _FullName(n, s, _Gender.FEMALE))
+
+        return objs
+
+    def _create_all_cat_objs(self, cats):
+        self._cat_objs = {}
+
+        if 'std' in cats:
+            self._cat_objs['std'] = []
+
+        for cat in (cats - {'std'}):
+            self._cat_objs[cat] = self._get_cat_objs(cat)
+
+    def _create_std_objs(self):
+        self._name_objs = []
+
+        if self._gender is None or self._gender == _Gender.MALE:
+            self._name_objs += self._cat_file_to_objs('std-names-m',
+                                                      lambda n, s: _PartialName(n, _Gender.MALE))
+
+        if self._gender is None or self._gender == _Gender.FEMALE:
+            self._name_objs += self._cat_file_to_objs('std-names-f',
+                                                      lambda n, s: _PartialName(n, _Gender.FEMALE))
+
+        self._surname_objs = self._cat_file_to_objs('std-surnames',
+                                                    lambda n, s: _PartialName(s))
+
+    def _create_objs(self, cats):
+        self._create_std_objs()
+        self._create_all_cat_objs(cats)
+
+    @staticmethod
+    def _cat_file_to_objs(cat_filename, create_obj_func):
+        path = os.path.join('cats', cat_filename) + '.json'
+        path = pkg_resources.resource_filename(__name__, path)
+
+        if not os.path.exists(path):
+            return []
+
+        with open(path) as f:
+            entries = json.load(f)
+
+        objs = []
+
+        for entry in entries:
+            name = entry.get('name')
+            surname = entry.get('surname')
+            objs.append(create_obj_func(name, surname))
+
+        return objs
 
 
-def _random_std_fullname(surname_count, with_middle_name, gender):
-    name_objs = []
-
-    if gender is None or gender == _Gender.MALE:
-        name_objs += _cat_file_to_objs('std-names-m',
-                                       lambda n, s: _PartialName(n, _Gender.MALE))
-
-    if gender is None or gender == _Gender.FEMALE:
-        name_objs += _cat_file_to_objs('std-names-f',
-                                       lambda n, s: _PartialName(n, _Gender.FEMALE))
-
-    surname_objs = _cat_file_to_objs('std-surnames',
-                                     lambda n, s: _PartialName(s))
-    rand_name_objs = random.sample(name_objs, 2 if with_middle_name else 1)
-    rand_surname_objs = random.sample(surname_objs, surname_count)
-    surname = '-'.join([obj.name for obj in rand_surname_objs])
-    return _FullName(rand_name_objs[0].name,surname, rand_name_objs[0].gender,
-	               rand_name_objs[1].name if with_middle_name else None)
-
-
-def _random_cat_fullname(cat_name, gender):
-    assert(cat_name != 'std')
-    objs = []
-
-    if gender is None or gender == _Gender.MALE:
-        objs += _cat_file_to_objs(cat_name + '-m',
-                                  lambda n, s: _FullName(n, s, _Gender.MALE))
-
-    if gender is None or gender == _Gender.FEMALE:
-        objs += _cat_file_to_objs(cat_name + '-f',
-                                  lambda n, s: _FullName(n, s, _Gender.FEMALE))
-
-    if len(objs) == 0:
-        return
-
-    return random.choice(objs)
-
-
-class _CliError(Exception):
+class _CliError(RuntimeError):
     pass
 
 
@@ -170,6 +196,8 @@ def _parse_args():
                         help='Generate a middle initial (only available for the `std` category)')
     parser.add_argument('--middle-name', '-M', action='store_true',
                         help='Generate a middle name (only available for the `std` category)')
+    parser.add_argument('--wheel', '-w', action='store_true',
+                        help='Spin a wheel to find a name (only use interactively)')
     parser.add_argument('--version', '-V', action='version', version=f'qngng {qngng.__version__}',
                         help='Show version and quit')
     args = parser.parse_args()
@@ -275,7 +303,6 @@ class _Format(enum.Enum):
 
 
 def _format_name(fullname, fmt=_Format.DEFAULT, with_middle_name_initial=True):
-
     parts = []
 
     if fullname.name:
@@ -309,32 +336,44 @@ def _format_name(fullname, fmt=_Format.DEFAULT, with_middle_name_initial=True):
     return string
 
 
-def _run(args):
-    rand_fullnames = []
+def _spin_wheel(app, args):
+    import time
 
-    for cat in args.cat:
-        rand_fullname = None
+    x = 0
+    prev_name_len = 0
 
-        if cat == 'std':
-            rand_fullname = _random_std_fullname(2 if args.double_surname else 1,
-                                                 args.middle_name or args.middle_initial,
-                                                 args.gender)
+    while True:
+        name = _format_name(app.random_full_name(), args.fmt, args.middle_initial)
+        sys.stdout.write('\r')
+        sys.stdout.write(' ' * prev_name_len)
+        sys.stdout.write('\r')
+        prev_name_len = len(name)
+        sys.stdout.write(name)
+        sys.stdout.flush()
+        dur = x**10 + .05
+        x += .02
+
+        if x <= 1.05:
+            time.sleep(dur)
         else:
-            rand_fullname = _random_cat_fullname(cat, args.gender)
+            break
 
-        if rand_fullname is not None:
-            rand_fullnames.append(rand_fullname)
+    print()
 
-    if len(rand_fullnames) == 0:
-        raise _CliError('No name found.')
 
-    rand_fullname = random.choice(rand_fullnames)
-    print(_format_name(rand_fullname, args.fmt, args.middle_initial))
+def _run(args):
+    app = _App(2 if args.double_surname else 1, args.middle_name or args.middle_initial,
+               args.gender, set(args.cat))
+
+    if args.wheel:
+        _spin_wheel(app, args)
+    else:
+        print(_format_name(app.random_full_name(), args.fmt, args.middle_initial))
 
 
 def _main():
     try:
         _run(_parse_args())
-    except Exception as exc:
+    except RuntimeError as exc:
         print(exc, file=sys.stderr)
         sys.exit(1)

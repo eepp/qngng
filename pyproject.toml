@@ -46,10 +46,20 @@ classifiers = [
     'Natural Language :: English',
     'Programming Language :: Python :: 3 :: Only',
 ]
-requires-python = '>=3.9'
+requires-python = '>=3.12'
+dependencies = [
+    'typer~=0.15',
+    'pydantic~=2.10',
+    'msgspec~=0.19',
+]
+
+[dependency-groups]
+dev = [
+    'pytest~=8.3',
+]
 
 [project.scripts]
-qngng = 'qngng.qngng:_main'
+qngng = 'qngng.qngng:_app'
 
 [project.urls]
 Repository = 'https://github.com/eepp/qngng/'
@@ -57,3 +67,6 @@ Repository = 'https://github.com/eepp/qngng/'
 
 [tool.hatch.build.targets.wheel]
 packages = ['qngng']
+
+[tool.pyright]
+typeCheckingMode = 'strict'

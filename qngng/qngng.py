@@ -1,7 +1,7 @@
 # MIT License
 #
 # Copyright (c) 2018 Antoine Busque
-# Copyright (c) 2018-2020 Philippe Proulx
+# Copyright (c) 2018-2025 Philippe Proulx
 #
 # Permission is hereby granted, free of charge, to any person obtaining
 # a copy of this software and associated documentation files (the
@@ -22,336 +22,240 @@
 # TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import argparse
-import json
-import operator
+import enum
+import importlib.resources
+import msgspec
+import pydantic
+import qngng
 import random
 import sys
+import time
+import typer
+import typing
 import unicodedata
-from importlib import resources
-import qngng
-import enum
-import re
 
 
 @enum.unique
-class _Gender(enum.Enum):
-    MALE = 1
-    FEMALE = 2
+class Gender(enum.StrEnum):
+    MALE = 'male'
+    FEMALE = 'female'
 
 
-class _PartialName:
-    def __init__(self, name, gender=None):
-        self._name = name
+@enum.unique
+class Format(enum.StrEnum):
+    DEFAULT = 'default'
+    SNAKE = 'snake'
+    KEBAB = 'kebab'
+    CAMEL = 'camel'
+    CAP_CAMEL = 'cap-camel'
+
+
+@enum.unique
+class Category(enum.StrEnum):
+    STD = 'std'
+    UDA_ACTORS = 'uda-actors'
+    UDA_HOSTS = 'uda-hosts'
+    UDA_SINGERS = 'uda-singers'
+    UDA = 'uda'
+    LBL = 'lbl'
+    SN = 'sn'
+    ICIP = 'icip'
+    D31 = 'd31'
+    DUG = 'dug'
+    ALL = 'all'
+
+
+_UNIQUE_CATS: frozenset[Category] = frozenset({
+    Category.STD,
+    Category.UDA_ACTORS,
+    Category.UDA_HOSTS,
+    Category.UDA_SINGERS,
+    Category.LBL,
+    Category.SN,
+    Category.ICIP,
+    Category.D31,
+    Category.DUG,
+})
+
+
+class JsonEntry(msgspec.Struct, frozen=True):
+    name: str | None = None
+    surname: str | None = None
+
+
+class PartialName(pydantic.BaseModel, frozen=True):
+    name: str
+    gender: Gender | None = None
+
+
+class FullName(pydantic.BaseModel, frozen=True):
+    name: str
+    surname: str
+    gender: Gender
+    middle_name: str | None = None
+
+    @property
+    def middle_initial(self) -> str:
+        if self.middle_name is None:
+            raise ValueError('No middle name')
+
+        return self.middle_name[0].upper()
+
+
+class NameGenerator:
+    def __init__(self, surname_count: typing.Literal[1, 2] = 1, with_middle_name: bool = False,
+                 gender: Gender | None = None,
+                 categories: frozenset[Category] = frozenset({Category.STD})) -> None:
+        self._surname_count = surname_count
+        self._with_middle_name = with_middle_name
         self._gender = gender
+        self._cat_objs: dict[Category, list[FullName]] = {}
+        self._name_objs: list[PartialName] = []
+        self._surname_objs: list[PartialName] = []
+        self._create_objs(categories)
 
-    @property
-    def name(self):
-        return self._name
+    def random_full_name(self) -> FullName:
+        rand_cat = random.choice(list(self._cat_objs.keys()))
 
-    @property
-    def gender(self):
-        return self._gender
-
-
-class _FullName:
-    def __init__(self, name, surname, gender, middle_name=None):
-        self._name = name
-        self._middle_name = middle_name
-        self._surname = surname
-        self._gender = gender
-
-    @property
-    def name(self):
-        return self._name
-
-    @property
-    def middle_name(self):
-        return self._middle_name
-
-    @property
-    def surname(self):
-        return self._surname
-
-    @property
-    def gender(self):
-        return self._gender
-
-    @property
-    def middle_initial(self):
-        assert self._middle_name is not None
-        return self._middle_name[0].upper()
-
-
-class _App:
-    def __init__(self, std_surname_count, std_with_middle_name, gender, cats):
-        self._std_surname_count = std_surname_count
-        self._std_with_middle_name = std_with_middle_name
-        self._gender = gender
-        self._create_objs(cats)
-
-    def random_full_name(self):
-        rand_cat = random.choice(list(self._cat_objs))
-
-        if rand_cat == 'std':
+        if rand_cat == Category.STD:
             return self._random_std_full_name()
-        else:
-            return random.choice(self._cat_objs[rand_cat])
 
-    def _random_std_full_name(self):
-        rand_name_objs = random.sample(self._name_objs, 2 if self._std_with_middle_name else 1)
-        rand_surname_objs = random.sample(self._surname_objs, self._std_surname_count)
-        surname = '-'.join([obj.name for obj in rand_surname_objs])
-        return _FullName(rand_name_objs[0].name, surname, rand_name_objs[0].gender,
-                         rand_name_objs[1].name if self._std_with_middle_name else None)
+        return random.choice(self._cat_objs[rand_cat])
 
-    def _get_cat_objs(self, cat):
-        assert cat != 'std'
-        objs = []
+    def _random_std_full_name(self) -> FullName:
+        rand_name_objs = random.sample(self._name_objs, 2 if self._with_middle_name else 1)
+        rand_surname_objs = random.sample(self._surname_objs, self._surname_count)
+        surname = '-'.join(obj.name for obj in rand_surname_objs)
+        first = rand_name_objs[0]
 
-        if self._gender is None or self._gender == _Gender.MALE:
-            objs += self._cat_file_to_objs(cat + '-m',
-                                           lambda n, s: _FullName(n, s, _Gender.MALE))
+        return FullName(name=first.name, surname=surname, gender=first.gender or Gender.MALE,
+                        middle_name=rand_name_objs[1].name if self._with_middle_name else None)
 
-        if self._gender is None or self._gender == _Gender.FEMALE:
-            objs += self._cat_file_to_objs(cat + '-f',
-                                           lambda n, s: _FullName(n, s, _Gender.FEMALE))
-
-        return objs
-
-    def _create_all_cat_objs(self, cats):
-        self._cat_objs = {}
-
-        if 'std' in cats:
-            self._cat_objs['std'] = []
-
-        for cat in (cats - {'std'}):
-            self._cat_objs[cat] = self._get_cat_objs(cat)
-
-    def _create_std_objs(self):
-        self._name_objs = []
-
-        if self._gender is None or self._gender == _Gender.MALE:
-            self._name_objs += self._cat_file_to_objs('std-names-m',
-                                                      lambda n, s: _PartialName(n, _Gender.MALE))
-
-        if self._gender is None or self._gender == _Gender.FEMALE:
-            self._name_objs += self._cat_file_to_objs('std-names-f',
-                                                      lambda n, s: _PartialName(n, _Gender.FEMALE))
-
-        self._surname_objs = self._cat_file_to_objs('std-surnames',
-                                                    lambda n, s: _PartialName(s))
-
-    def _create_objs(self, cats):
-        self._create_std_objs()
-        self._create_all_cat_objs(cats)
-
-    @staticmethod
-    def _cat_file_to_objs(cat_filename, create_obj_func):
+    def _load_json_entries(self, cat_filename: str) -> list[JsonEntry]:
         resource_path = f'cats/{cat_filename}.json'
 
         try:
-            ref = resources.files('qngng').joinpath(resource_path)
-            content = ref.read_text()
+            ref = importlib.resources.files('qngng').joinpath(resource_path)
+            content = ref.read_bytes()
         except (FileNotFoundError, TypeError):
             return []
 
-        entries = json.loads(content)
+        return msgspec.json.decode(content, type=list[JsonEntry])
 
-        objs = []
+    def _get_cat_objs(self, cat: Category) -> list[FullName]:
+        objs: list[FullName] = []
 
-        for entry in entries:
-            name = entry.get('name')
-            surname = entry.get('surname')
-            objs.append(create_obj_func(name, surname))
+        if self._gender is None or self._gender == Gender.MALE:
+            for entry in self._load_json_entries(f'{cat}-m'):
+                if entry.name and entry.surname:
+                    objs.append(FullName(name=entry.name, surname=entry.surname,
+                                         gender=Gender.MALE))
+
+        if self._gender is None or self._gender == Gender.FEMALE:
+            for entry in self._load_json_entries(f'{cat}-f'):
+                if entry.name and entry.surname:
+                    objs.append(FullName(name=entry.name, surname=entry.surname,
+                                gender=Gender.FEMALE))
 
         return objs
 
+    def _create_std_objs(self) -> None:
+        if self._gender is None or self._gender == Gender.MALE:
+            for entry in self._load_json_entries('std-names-m'):
+                if entry.name:
+                    self._name_objs.append(PartialName(name=entry.name, gender=Gender.MALE))
 
-class _CliError(RuntimeError):
-    pass
+        if self._gender is None or self._gender == Gender.FEMALE:
+            for entry in self._load_json_entries('std-names-f'):
+                if entry.name:
+                    self._name_objs.append(PartialName(name=entry.name, gender=Gender.FEMALE))
 
+        for entry in self._load_json_entries('std-surnames'):
+            if entry.surname:
+                self._surname_objs.append(PartialName(name=entry.surname))
 
-def _parse_args():
-    parser = argparse.ArgumentParser(description=qngng.__description__)
-    parser.add_argument('--gender', '-g', choices=['male', 'female'],
-                        help='Print a male or female name')
-    parser.add_argument('--male', '-m', action='store_true',
-                        help='Shorthand for `--gender=male`')
-    parser.add_argument('--female', '-f', action='store_true',
-                        help='Shorthand for `--gender=female`')
-    parser.add_argument('--snake-case', '-s', action='store_true',
-                        help='Print name in `snake_case` format')
-    parser.add_argument('--kebab-case', '-k', action='store_true',
-                        help='Print name in `kebab-case` format')
-    parser.add_argument('--camel-case', '-C', action='store_true',
-                        help='Print name in `camelCase` format')
-    parser.add_argument('--cap-camel-case', action='store_true',
-                        help='Print name in `CapitalizedCamelCase` format')
-    parser.add_argument('--cat', '-c', action='append',
-                        help='Category name')
-    parser.add_argument('--double-surname', '-d', action='store_true',
-                        help='Create a double-barrelled surname (only available for the `std` category)')
-    parser.add_argument('--middle-initial', '-I', action='store_true',
-                        help='Generate a middle initial (only available for the `std` category)')
-    parser.add_argument('--middle-name', '-M', action='store_true',
-                        help='Generate a middle name (only available for the `std` category)')
-    parser.add_argument('--wheel', '-w', action='store_true',
-                        help='Spin a wheel to find a name (only use interactively)')
-    parser.add_argument('--version', '-V', action='version', version=f'qngng {qngng.__version__}',
-                        help='Show version and quit')
-    args = parser.parse_args()
+    def _create_objs(self, categories: frozenset[Category]) -> None:
+        self._create_std_objs()
 
-    if sum([0 if args.gender is None else 1, args.male, args.female]) > 1:
-        raise _CliError('Cannot specify more than one option amongst `--gender`, `--male`, and `--female`.')
+        if Category.STD in categories:
+            self._cat_objs[Category.STD] = []
 
-    if args.middle_name and args.middle_initial:
-        raise _CliError('Cannot specify more than one option amongst `--middle-initial` and `--middle-name`.')
-
-    if args.male:
-        args.gender = 'male'
-
-    if args.female:
-        args.gender = 'female'
-
-    if args.gender == 'male':
-        args.gender = _Gender.MALE
-    elif args.gender == 'female':
-        args.gender = _Gender.FEMALE
-    else:
-        args.gender = random.choice([_Gender.MALE, _Gender.FEMALE])
-
-    if sum([args.kebab_case, args.snake_case, args.camel_case, args.cap_camel_case]) > 1:
-        raise _CliError('Cannot specify more than one option amongst `--snake-case`, `--kebab-case`, `--camel-case`, and `--cap-camel-case`.')
-
-    args.fmt = _Format.DEFAULT
-
-    if args.snake_case:
-        args.fmt = _Format.SNAKE
-    elif args.kebab_case:
-        args.fmt = _Format.KEBAB
-    elif args.camel_case:
-        args.fmt = _Format.CAMEL
-    elif args.cap_camel_case:
-        args.fmt = _Format.CAP_CAMEL
-
-    unique_cats = {
-        'std',
-        'uda-actors',
-        'uda-hosts',
-        'uda-singers',
-        'lbl',
-        'sn',
-        'icip',
-        'd31',
-        'dug',
-    }
-    grouping_cats = {
-        'all',
-        'uda',
-    }
-    valid_cats = unique_cats | grouping_cats
-    real_cats = []
-
-    if args.cat is None:
-        real_cats.append('std')
-    else:
-        for cat in args.cat:
-            if cat not in valid_cats:
-                raise _CliError('Unknown category `{}`.'.format(cat))
-
-            if cat == 'all':
-                real_cats += list(unique_cats)
-            elif cat == 'uda':
-                real_cats += ['uda-actors', 'uda-hosts', 'uda-singers']
-            else:
-                real_cats.append(cat)
-
-    if args.double_surname and 'std' not in real_cats:
-        raise _CliError('Cannot specify `--double-surname` without the `std` category.')
-
-    if args.middle_name and 'std' not in real_cats:
-        raise _CliError('Cannot specify `--middle-name` without the `std` category.')
-
-    if args.middle_initial and 'std' not in real_cats:
-        raise _CliError('Cannot specify `--middle-initial` without the `std` category.')
-
-    args.cat = real_cats
-    return args
+        for cat in categories - {Category.STD}:
+            self._cat_objs[cat] = self._get_cat_objs(cat)
 
 
-def _strip_diacritics(s):
+def _strip_diacritics(s: str) -> str:
     return unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode('utf-8')
 
 
-def _normalize_name(name, sep, lower=True):
+def _normalize_name(name: str, sep: str, lower: bool = True) -> str:
     name = _strip_diacritics(name)
 
     if lower:
         name = name.lower()
 
-    return re.sub(r'[^a-zA-Z0-9_]', sep, name)
+    result: list[str] = []
+
+    for char in name:
+        if char.isalnum() or char == '_':
+            result.append(char)
+        else:
+            result.append(sep)
+
+    return ''.join(result)
 
 
-@enum.unique
-class _Format(enum.Enum):
-    DEFAULT = 0
-    SNAKE = 1
-    KEBAB = 2
-    CAMEL = 3
-    CAP_CAMEL = 4
-
-
-def _format_name(fullname, fmt=_Format.DEFAULT, with_middle_name_initial=True):
-    parts = []
+def format_name(fullname: FullName, fmt: Format = Format.DEFAULT,
+                with_middle_initial: bool = True) -> str:
+    parts: list[str] = []
 
     if fullname.name:
-        parts.append(fullname.name);
+        parts.append(fullname.name)
 
     if fullname.middle_name:
-        middle_initial = fullname.middle_initial
+        if with_middle_initial:
+            initial = fullname.middle_initial
 
-        if fmt == _Format.DEFAULT:
-            middle_initial += '.'
+            if fmt == Format.DEFAULT:
+                initial += '.'
 
-        parts.append(middle_initial if with_middle_name_initial else fullname.middle_name)
+            parts.append(initial)
+        else:
+            parts.append(fullname.middle_name)
 
     if fullname.surname:
-        parts.append(fullname.surname);
+        parts.append(fullname.surname)
 
     raw_name = ' '.join(parts)
 
-    if fmt == _Format.DEFAULT:
-        return raw_name
-    elif fmt == _Format.SNAKE:
-        return _normalize_name(raw_name, '_')
-    elif fmt == _Format.KEBAB:
-        return _normalize_name(raw_name, '-')
-    elif fmt == _Format.CAMEL or fmt == _Format.CAP_CAMEL:
-        string = _normalize_name(raw_name, '', False)
+    match fmt:
+        case Format.DEFAULT:
+            return raw_name
+        case Format.SNAKE:
+            return _normalize_name(raw_name, '_')
+        case Format.KEBAB:
+            return _normalize_name(raw_name, '-')
+        case Format.CAMEL:
+            s = _normalize_name(raw_name, '', False)
+            return s[0].lower() + s[1:] if s else s
+        case Format.CAP_CAMEL:
+            return _normalize_name(raw_name, '', False)
 
-        if fmt == _Format.CAMEL:
-            string = string[0].lower() + string[1:]
 
-    return string
-
-
-def _spin_wheel(app, args):
-    import time
-
-    x = 0
+def _spin_wheel(generator: NameGenerator, fmt: Format, middle_initial: bool) -> None:
+    x = 0.0
     prev_name_len = 0
 
     while True:
-        name = _format_name(app.random_full_name(), args.fmt, args.middle_initial)
+        name = format_name(generator.random_full_name(), fmt, middle_initial)
         sys.stdout.write('\r')
         sys.stdout.write(' ' * prev_name_len)
         sys.stdout.write('\r')
         prev_name_len = len(name)
         sys.stdout.write(name)
         sys.stdout.flush()
-        dur = x**10 + .05
-        x += .02
+        dur = x**10 + 0.05
+        x += 0.02
 
         if x <= 1.05:
             time.sleep(dur)
@@ -361,19 +265,108 @@ def _spin_wheel(app, args):
     print()
 
 
-def _run(args):
-    app = _App(2 if args.double_surname else 1, args.middle_name or args.middle_initial,
-               args.gender, set(args.cat))
+_app = typer.Typer(
+    name='qngng',
+    help=qngng.__description__,
+    add_completion=True,
+    pretty_exceptions_enable=False,
+)
 
-    if args.wheel:
-        _spin_wheel(app, args)
+
+def _expand_categories(cats: list[Category] | None) -> frozenset[Category]:
+    if not cats:
+        return frozenset({Category.STD})
+
+    result: set[Category] = set()
+
+    for cat in cats:
+        match cat:
+            case Category.ALL:
+                result |= set(_UNIQUE_CATS)
+            case Category.UDA:
+                result |= {Category.UDA_ACTORS, Category.UDA_HOSTS, Category.UDA_SINGERS}
+            case _:
+                result.add(cat)
+
+    return frozenset(result)
+
+
+def _version_callback(value: bool) -> None:
+    if value:
+        print(f'qngng {qngng.__version__}')
+        raise typer.Exit()
+
+
+@_app.command()
+def _main(  # pyright: ignore[reportUnusedFunction]
+    gender: typing.Annotated[
+        Gender | None, typer.Option('--gender', '-g', help='Generate a male or female name'),
+    ] = None,
+    male: typing.Annotated[
+        bool, typer.Option('--male', '-m', help='Shorthand for `--gender=male`'),
+    ] = False,
+    female: typing.Annotated[
+        bool, typer.Option('--female', '-f', help='Shorthand for `--gender=female`'),
+    ] = False,
+    fmt: typing.Annotated[
+        Format, typer.Option('--format', '-F', help='Output format'),
+    ] = Format.DEFAULT,
+    cat: typing.Annotated[
+        list[Category] | None, typer.Option('--cat', '-c', help='Category name (can be repeated)'),
+    ] = None,
+    double_surname: typing.Annotated[
+        bool, typer.Option('--double-surname', '-d',
+                           help='Create a double-barrelled surname (only for the `std` category)'),
+    ] = False,
+    middle_initial: typing.Annotated[
+        bool, typer.Option('--middle-initial', '-I',
+                           help='Generate a middle initial (only for `std` category)'),
+    ] = False,
+    middle_name: typing.Annotated[
+        bool, typer.Option('--middle-name', '-M',
+                           help='Generate a middle name (only for `std` category)'),
+    ] = False,
+    wheel: typing.Annotated[
+        bool, typer.Option('--wheel', '-w',
+                           help='Spin a wheel to find a name (interactive use only)'),
+    ] = False,
+    version: typing.Annotated[
+        bool, typer.Option('--version', '-V', callback=_version_callback, is_eager=True,
+                           help='Show version and exit'),
+    ] = False,
+) -> None:
+    gender_opts = sum([gender is not None, male, female])
+
+    if gender_opts > 1:
+        raise typer.BadParameter('Cannot specify more than one option amongst `--gender`, `--male`, and `--female`.')
+
+    if middle_name and middle_initial:
+        raise typer.BadParameter('Cannot specify both `--middle-initial` and `--middle-name`.')
+
+    resolved_gender: Gender | None = gender
+
+    if male:
+        resolved_gender = Gender.MALE
+    elif female:
+        resolved_gender = Gender.FEMALE
+    elif resolved_gender is None:
+        resolved_gender = random.choice([Gender.MALE, Gender.FEMALE])
+
+    categories = _expand_categories(cat)
+
+    if double_surname and Category.STD not in categories:
+        raise typer.BadParameter('Cannot specify `--double-surname` without the `std` category.')
+
+    if middle_name and Category.STD not in categories:
+        raise typer.BadParameter('Cannot specify `--middle-name` without the `std` category.')
+
+    if middle_initial and Category.STD not in categories:
+        raise typer.BadParameter('Cannot specify `--middle-initial` without the `std` category.')
+
+    generator = NameGenerator(2 if double_surname else 1, middle_name or middle_initial,
+                              resolved_gender, categories)
+
+    if wheel:
+        _spin_wheel(generator, fmt, middle_initial)
     else:
-        print(_format_name(app.random_full_name(), args.fmt, args.middle_initial))
-
-
-def _main():
-    try:
-        _run(_parse_args())
-    except RuntimeError as exc:
-        print(exc, file=sys.stderr)
-        sys.exit(1)
+        print(format_name(generator.random_full_name(), fmt, with_middle_initial=middle_initial))

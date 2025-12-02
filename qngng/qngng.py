@@ -25,11 +25,10 @@
 import argparse
 import json
 import operator
-import os.path
 import random
 import sys
 import unicodedata
-import pkg_resources
+from importlib import resources
 import qngng
 import enum
 import re
@@ -149,14 +148,15 @@ class _App:
 
     @staticmethod
     def _cat_file_to_objs(cat_filename, create_obj_func):
-        path = os.path.join('cats', cat_filename) + '.json'
-        path = pkg_resources.resource_filename(__name__, path)
+        resource_path = f'cats/{cat_filename}.json'
 
-        if not os.path.exists(path):
+        try:
+            ref = resources.files('qngng').joinpath(resource_path)
+            content = ref.read_text()
+        except (FileNotFoundError, TypeError):
             return []
 
-        with open(path) as f:
-            entries = json.load(f)
+        entries = json.loads(content)
 
         objs = []
 

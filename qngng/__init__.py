@@ -22,7 +22,7 @@
 # TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 # SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-__version__ = '2.1.0'
+__version__ = '2.1.1'
 __description__ = 'The Queb name generator: next generation'
 
 from qngng.qngng import Category, Format, FullName, Gender, NameGenerator, PartialName, format_name

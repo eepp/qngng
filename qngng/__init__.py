@@ -24,3 +24,5 @@
 
 __version__ = '1.6.1'
 __description__ = 'The Queb name generator: next generation'
+
+from qngng.qngng import Category, Format, FullName, Gender, NameGenerator, PartialName, format_name

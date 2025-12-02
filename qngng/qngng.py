@@ -308,9 +308,18 @@ def _main(  # pyright: ignore[reportUnusedFunction]
     female: typing.Annotated[
         bool, typer.Option('--female', '-f', help='Shorthand for `--gender=female`'),
     ] = False,
-    fmt: typing.Annotated[
-        Format, typer.Option('--format', '-F', help='Output format'),
-    ] = Format.DEFAULT,
+    snake_case: typing.Annotated[
+        bool, typer.Option('--snake-case', '-s', help='Print name in `snake_case` format'),
+    ] = False,
+    kebab_case: typing.Annotated[
+        bool, typer.Option('--kebab-case', '-k', help='Print name in `kebab-case` format'),
+    ] = False,
+    camel_case: typing.Annotated[
+        bool, typer.Option('--camel-case', '-C', help='Print name in `camelCase` format'),
+    ] = False,
+    cap_camel_case: typing.Annotated[
+        bool, typer.Option('--cap-camel-case', help='Print name in `CapitalizedCamelCase` format'),
+    ] = False,
     cat: typing.Annotated[
         list[Category] | None, typer.Option('--cat', '-c', help='Category name (can be repeated)'),
     ] = None,
@@ -342,6 +351,20 @@ def _main(  # pyright: ignore[reportUnusedFunction]
 
     if middle_name and middle_initial:
         raise typer.BadParameter('Cannot specify both `--middle-initial` and `--middle-name`.')
+
+    if sum([snake_case, kebab_case, camel_case, cap_camel_case]) > 1:
+        raise typer.BadParameter('Cannot specify more than one format option.')
+
+    fmt = Format.DEFAULT
+
+    if snake_case:
+        fmt = Format.SNAKE
+    elif kebab_case:
+        fmt = Format.KEBAB
+    elif camel_case:
+        fmt = Format.CAMEL
+    elif cap_camel_case:
+        fmt = Format.CAP_CAMEL
 
     resolved_gender: Gender | None = gender
 

@@ -27,7 +27,7 @@ build-backend = 'hatchling.build'
 
 [project]
 name = 'qngng'
-version = '1.6.0'
+version = '1.6.1'
 description = 'The Queb name generator: next generation'
 license = 'MIT'
 authors = [{name = 'Philippe Proulx', email = 'eeppeliteloop@gmail.com'}]
